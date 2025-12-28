@@ -306,7 +306,8 @@ public class SakashoObfuscation
         // Add pre-transformed common key.
         for (int i = 0; i < commonKey.Length && xorLen < XorTableLengthMax; i++) {
             // Transform the common key, like FUN_0004a120 in libsakasho.so.
-            xorTable[xorLen++] = -0x62 - commonKey[i];
+            byte c = commonKey[i];
+            xorTable[xorLen++] = (-0x62 - c) & 0xFF;
         }
 
         // Add session ID as string.
@@ -341,6 +342,80 @@ public class SakashoObfuscation
             : Varint.Read(tmp, posOut);
     }
 
+    /// Fully decodes and decompresses obfuscated bytes.
+    /// Returns a pre-allocated byte array (must be freed by the caller)
+    /// or null if the decompression failed.
+    public byte[]#? Decode(byte[] data, int dataLen)
+    {
+        byte[]# tmp = new byte[dataLen]; // Temporary decoded output.
+        data.CopyTo(0, tmp, 0, dataLen); // Copy the input data.
+        XorDecode(tmp, dataLen); // XOR decode.
+        // Get the decompressed size.
+        byte[1] posOut; posOut[0] = 0; // Varint offset stored here.
+        // int size = GetDecompressedSize(data, posOut);
+        int size = Varint.Read(tmp, posOut);
+        if (size <= 0)
+            return null; // Bad/corrupted size value.
+        // Sanity check a max size of 100 MB.
+        assert size <= 100 * 1024 * 1024;
+
+        // Decompress the deobfuscated bytes.
+        byte[]# output = new byte[size];
+        int decompressed = Lz4.Decompress(
+            /*data*/ tmp, output, dataLen - posOut[0], // Subtract varint size from length.
+            size, posOut[0]); // Last arg = compressed offset = varint size.
+        if (decompressed <= 0)
+            return null; // Decompression failed.
+
+        return output; // Must be freed by the caller in C.
+    }
+
+    /// Fully compresses and obfuscates raw bytes.
+    /// Returned a pre-allocated byte array (must be freed by the caller)
+    /// containing the compressed and obfuscated data, or null on failure.
+    ///
+    /// NOTE: The length of the array is posOut. You must trim the output.
+    /// Example: const len = new Uint8Array([0]);
+    /// let result = obfs.encode(in, size, len); result = result.subarray(0, len);
+    public byte[]#? Encode(byte[] data, int dataLen,
+        /// Array where the 0th element is the output size.
+        int[]! posOut)
+    {
+        // Get the maximum size/worst-case scenario to know
+        // how much to allocate the compressed data buffer.
+        int maxCompressed = Lz4.GetMaxCompressedSize(dataLen);
+        if (maxCompressed <= 0)
+            return null; // Input data is too long or short.
+
+        // Allocate buffer to hold maximum for compressed data and varint.
+        byte[]# buffer = new byte[Varint.MaxSizeInt + maxCompressed];
+        // Write the size of the uncompressed data.
+        int varintSize = Varint.Write(buffer, dataLen, 0);
+        if (varintSize <= 0)
+            return null; // Input data is larger than varint max size.
+
+        // Compress the input data and write it after the varint.
+        int compressedSize = Lz4.Compress(data, buffer, dataLen, maxCompressed,
+            varintSize); // Use the varint size as the offset.
+        if (compressedSize <= 0)
+            return null; // Compression failed.
+
+        // Actual size of compressed payload. The buffer is larger than this.
+        int totalSize = varintSize + compressedSize;
+        // Compression is finished. XOR encode the whole stream.
+        XorEncode(buffer, totalSize);
+
+        // Make a new buffer of the exact compressed size, copy to and return that.
+        // byte[]# result = new byte[totalSize];
+        // buffer.CopyTo(0, result, 0, totalSize);
+        // if (posOut != null) posOut[0] = totalSize;
+        // return result;
+
+        // Instead, the caller must trim the output.
+        posOut[0] = totalSize;
+        return buffer;
+    }
+
     /// Applies the conditional XOR/bit rotation operation to decode the data.
     /// Reference: libsaksho.so:FUN_0004ec70, Java_jp_dena_sakasho_core_delegate_CookedResponseDelegate_cookResponse
     public static void XorDecodeBuffer(byte[]! data, int dataLen, byte[] table, int tableLen)
@@ -355,7 +430,7 @@ public class SakashoObfuscation
             } else {
                 int shift = keyByte & 7;
                 // Perform bit rotation (decode direction).
-                data[i] = (inputByte >> (8 - shift)) | (inputByte << shift);
+                data[i] = ((inputByte >> (8 - shift)) | (inputByte << shift)) & 0xFF;
             }
         }
     }
@@ -374,7 +449,7 @@ public class SakashoObfuscation
             } else {
                 int shift = keyByte & 7;
                 // Perform bit rotation (encode direction).
-                data[i] = (inputByte << (8 - shift)) | (inputByte >> shift);
+                data[i] = ((inputByte << (8 - shift)) | (inputByte >> shift)) & 0xFF;
             }
         }
     }

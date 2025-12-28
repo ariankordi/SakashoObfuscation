@@ -1,0 +1,60 @@
+/*
+Contents of test-response.bin in Base64:
+
+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
+
+*/
+
+public class Test
+{
+    public static void Main()
+    {
+        byte[] obfuscated = resource<byte[]>("test-response.bin");
+        int obfuscatedLength = 2353;
+        string testSessionId = "ExfvbaLYekTosbFMNdcDEEoZ1C3a1n7CuPd89x4FDkFdbXWsOCbjPCb-V9qsVmdAyqHLZZwU401pQ6uwr6ij9gtEyRk0KVfSxLXQ9Qn0II0-XzBryDb_P-Nwp24yFoMUES8NNQ5o12Proeg07aRhKOTBH-F-WrsjoUM4ngdOLTZ48upeOXaE7ALa74uUOoXN";
+
+        SakashoObfuscation() obfs;
+        obfs.Initialize(
+            "9ec1c78fa2cb34e2bed5691c08432f04",
+            testSessionId);
+
+        // Decoding
+        int decSize = obfs.GetDecompressedSize(obfuscated);
+        if (decSize <= 0)
+        {
+            Console.WriteLine("Invalid input size.");
+            return;
+        }
+
+        byte[]#? decoded = obfs.Decode(obfuscated, obfuscatedLength);
+        if (decoded == null)
+        {
+            Console.WriteLine("Decoding failed.");
+            return;
+        }
+
+        // Encoding
+        int[1] cmpSize; cmpSize[0] = 0;
+        byte[]#? encoded = obfs.Encode(decoded, decSize, cmpSize);
+        if (encoded == null)
+        {
+            Console.WriteLine("Encoding failed.");
+            return;
+        }
+
+        byte[]# encodedFinal = new byte[cmpSize[0]];
+        encoded.CopyTo(0, encodedFinal, 0, cmpSize[0]);
+
+
+        byte[]#? reDecoded = obfs.Decode(obfuscated, obfuscatedLength);
+        if (reDecoded == null)
+        {
+            Console.WriteLine("RE-decoding failed.");
+            return;
+        }
+
+
+        string() reDecodedString = Encoding.UTF8.GetString(reDecoded, 0, decSize);
+        Console.WriteLine(reDecodedString);
+    }
+}
