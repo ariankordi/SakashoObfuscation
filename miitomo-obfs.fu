@@ -1,0 +1,381 @@
+/*
+ * DeNA Sakasho/Miitomo API deobfuscator in Fusion by Arian Kordi (https://github.com/ariankordi)
+ * Original implementation: https://gist.github.com/ariankordi/0b990239daa1f69d571c7de3bec57cc4
+ * What is this and how to use?:
+ * - This looks like C# but it's "Fusion" which transpiles to other languages.
+ * - Paste this into https://fusion-lang.org/playground and use your language of choice
+ * - Only JS has been tested for now, so if yours doesn't work then contact me.
+ * Usage in JS:
+
+// Initialize the XOR tables.
+const obfs = new SakashoObfuscation();
+obfs.initialize(
+    "9ec1c78fa2cb34e2bed5691c08432f04", // commonKey, always same.
+    // player_session_id cookie value. (Empty by default/for brevity)
+    "");
+
+// Decoding
+const decompressedSize = obfs.getDecompressedSize(obfuscated);
+if (decompressedSize <= 0) throw new Error("Invalid input size.");
+const result = obfs.decode(obfuscated, obfuscated.length);
+if (!result) throw new Error("Decoding failed.");
+console.warn("Input size:", obfuscated.length);
+console.warn("Decompressed size and content:", decompressedSize, result.toHex());
+
+// Encoding
+const cmpSize = new Int32Array([0]);
+let encoded = obfs.encode(result, decompressedSize, cmpSize);
+if (!encoded) throw new Error("Encoding failed.");
+encoded = encoded.subarray(0, cmpSize[0]);
+console.warn("Encoded size and content:", decompressedSize, encoded.toHex());
+
+// Re-decoding the encoded output for testing.
+const decoded = obfs.decode(encoded, encoded.length);
+if (!decoded) throw new Error("RE-decoding failed.");
+console.assert(result.toHex() == decoded.toHex());
+*/
+
+/// Reads and writes Base128 Varints used in Protobufs, DWARF...
+public static class Varint
+{
+    /// Maximum size for a 32-bit integer as a varint.
+    public const int MaxSizeInt = 5;
+    // The true max size is 10 bytes for a 64-bit long, but
+    // libsakasho.so doesn't handle larger than 32-bit ints.
+
+    /// Reads a varint from data starting at posOut[0].
+    /// Advances posOut[0] to indicate how large the varint was.
+    /// Maximum is a 32-bit int. Returns 0 on invalid varint.
+    public static int Read(
+        /// Byte array containing the varint.
+        byte[] data,
+        /// Single-element array containing the cursor.
+        /// The offset is read from this, and the varint size is written to it.
+        byte[]! posOut)
+    {
+        int value = 0;
+        int shift = 0;
+        int pos = posOut[0];
+
+        // libsakasho.so:FUN_0004aeac
+        for (int i = 0; i < MaxSizeInt; i++) {
+            int b = data[pos++];
+            value |= (b & 0x7F) << shift;
+
+            if ((b & 0x80) == 0) {
+                // End of varint.
+                posOut[0] = pos;
+                return value;
+            }
+
+            shift += 7;
+
+            // Do not exceed 35 bits for a 32-bit int.
+            if (shift >= 35)
+                return 0;
+        }
+
+        return 0; // Invalid varint.
+    }
+
+    /// Writes a 32-bit varint to the specified output.
+    /// Returns varint size, or 0 on failure.
+    public static int Write(byte[]! dst, int value,
+        /// Offset within dst to write the varint to.
+        int offset = 0)
+    {
+        //if (value < 0)
+        //    return 0; // Reject negative values.
+        int pos = 0;
+
+        for (int i = 0; i < MaxSizeInt; i++) {
+            int b = value & 0x7F;
+            value >>= 7;
+
+            if (value != 0) {
+                dst[offset + pos++] = b | 0x80;
+            } else {
+                dst[offset + pos++] = b;
+                return pos;
+            }
+        }
+
+        return 0; // Number is too large?
+    }
+}
+
+/// Simple LZ4 en/decoder. Goals are to be small and safe.
+/// Does not use the LZ4 frame format, and does not perform compression.
+public static class Lz4
+{
+    /// Decompresses a chunk of raw LZ4 data into the output buffer.
+    /// Returns the number of bytes decompressed, or -1 on corruption.
+    public static int Decompress(
+        /// Compressed input data.
+        byte[] src,
+        /// Decompressed output.
+        byte[]! dst,
+        /// Length of compressed input data.
+        int compressedSize,
+        /// Capacity of the output buffer.
+        int dstCapacity,
+        /// Offset into the compressed data.
+        int srcOffset = 0)
+    {
+        // Derived from AssetStudio (MIT License): https://github.com/RazTools/AssetStudio/blob/807117cb0b366bf02361b54e34846a14dc8558ee/AssetStudio/LZ4Utils.cs
+        // NOTE: This function has not been thoroughly tested for out-of-bounds writes.
+
+        int srcPos = 0;
+        int dstPos = 0;
+
+        // Iterate through all bytes available.
+        while (srcPos < compressedSize && dstPos < dstCapacity) {
+            if (srcPos >= compressedSize)
+                return -1; // Overflow: no token available.
+
+            // Get literal token.
+            // Low nibble = match length part (encCount), high nibble = literal length (litCount).
+            int token = src[srcOffset + srcPos++];
+            int encCount = token & 0xF;
+            int litCount = (token >> 4) & 0xF;
+
+            // Get literal length (variable/optional).
+            if (litCount == 0xF) {
+                int sum = 0;
+                do {
+                    if (srcPos >= compressedSize)
+                        return -1; // Overflow: incomplete extension.
+                    sum = src[srcOffset + srcPos++];
+                    litCount += sum;
+                } while (sum == 0xFF);
+            }
+
+            // Bounds check literal copy.
+            if (srcPos + litCount > compressedSize)
+                return -1; // Overflow: literals exceed input.
+            if (dstPos + litCount > dstCapacity)
+                return -1; // Overflow: literals exceed output.
+
+            // Copy literal/compressed chunk.
+            src.CopyTo(srcOffset + srcPos, dst, dstPos, litCount);
+            srcPos += litCount;
+            dstPos += litCount;
+
+            // Check for end-of-block (last literals, no match follows).
+            if (srcPos >= compressedSize)
+                break; // Valid end: last block was literals only.
+
+            // Get offset (2 bytes, little-endian).
+            if (srcPos + 1 >= compressedSize)
+                return -1; // Overflow: incomplete offset.
+            int back = src[srcOffset + srcPos] | (src[srcOffset + srcPos + 1] << 8);
+            srcPos += 2;
+
+            // Validate offset.
+            if (back <= 0 || back > dstPos)
+                return -1; // Invalid offset (zero or points before start).
+
+            // Get extended match length if needed.
+            if (encCount == 0xF) {
+                int sum = 0;
+                do {
+                    if (srcPos >= compressedSize)
+                        return -1; // Overflow: incomplete extension.
+                    sum = src[srcOffset + srcPos++];
+                    encCount += sum;
+                } while (sum == 0xFF);
+            }
+            encCount += 4; // Minimum match length is 4.
+
+            // Bounds check for match copy.
+            if (dstPos + encCount > dstCapacity)
+                return -1; // Overflow: match exceeds output.
+
+            int encPos = dstPos - back;
+
+            // Copy match (may overlap for repeat patterns).
+            if (encCount <= back) {
+                // Non-overlapping: safe bulk copy.
+                dst.CopyTo(encPos, dst, dstPos, encCount);
+                dstPos += encCount;
+            } else {
+                // Overlapping: manual byte-by-byte to handle repetition.
+                for (int i = 0; i < encCount; i++) {
+                    dst[dstPos++] = dst[encPos++];
+                }
+            }
+        }
+
+        return dstPos; // Success: return byte count written to dst.
+    }
+
+    /// Gets the maximum size of a compressed buffer, same as LZ4_compressBound.
+    public static int GetMaxCompressedSize(int inputSize)
+    {
+        return inputSize > 0x7E000000 // LZ4_MAX_INPUT_SIZE
+            ? 0 // Avoid a potential overflow.
+            : inputSize + (inputSize / 0xFF) + 16;
+        // return inputSize <= 0xF
+        //     ? inputSize + 1;
+        //     : inputSize + 1 + (inputSize - 0xF + 0xFE) / 0xFF;
+    }
+
+    /// Encodes input into raw LZ4 block format with no framing.
+    /// Returns the number of bytes written, or -1 on failure.
+    ///
+    /// This does not actually compress the data, leaving it
+    /// larger than it came in just for interoperability.
+    public static int Compress(
+        /// Input data.
+        byte[] src,
+        /// Destination to write compressed data to.
+        byte[]! dst,
+        /// Size of input data buffer.
+        int srcSize,
+        /// Capacity of the output buffer.
+        int dstCapacity,
+        /// Offset into the destination buffer.
+        int dstOffset = 0)
+    {
+        if (srcSize < 0)
+            return -1;
+
+        int dstPos = 0;
+
+        // Encode everything as a single literal block.
+        int litLen = srcSize;
+
+        // Token byte.
+        int tokenLit = litLen < 0xF ? litLen : 0xF;
+        if (dstPos >= dstCapacity)
+            return -1;
+
+        dst[dstOffset + dstPos++] = tokenLit << 4;
+
+        // Extra literal length bytes.
+        if (litLen >= 0xF) {
+            int len = litLen - 0xF;
+            while (len >= 0xFF) {
+                if (dstPos >= dstCapacity)
+                    return -1;
+                dst[dstOffset + dstPos++] = 0xFF;
+                len -= 0xFF;
+            }
+            if (dstPos >= dstCapacity)
+                return -1;
+            dst[dstOffset + dstPos++] = len;
+        }
+
+        // Copy literals.
+        if (dstPos + srcSize > dstCapacity)
+            return -1;
+
+        src.CopyTo(0, dst, dstOffset + dstPos, srcSize);
+        dstPos += srcSize;
+
+        return dstPos;
+    }
+}
+
+/// Deobfuscation for DeNA Sakasho HTTP request/response content.
+/// Reverse engineered from Miitomo, may be used elsewhere.
+/// They call this "CookedResponse"/"CookedRequestBody" in symbols.
+///
+/// Consists of XOR/bit rotation, LZ4 compression, and varint length field.
+/// This class just implements the XOR logic and a generic decode method
+/// calling the Varint and Lz4 classes implemented here.
+public class SakashoObfuscation
+{
+    /// Maximum for the XOR table length. Official player_session_id
+    /// cookies may push this. So if you're having issues, try increasing this.
+    const int XorTableLengthMax = 256;
+    byte[XorTableLengthMax] xorTable;
+    int xorLen;
+
+    /// Builds or rebuilds the internal XOR table.
+    public void Initialize!(
+        /// The common key string.
+        /// Value for Miitomo: 9ec1c78fa2cb34e2bed5691c08432f04
+        string commonKey,
+        /// The value of the player_session_id cookie,
+        /// or an empty string if the cookie was not set.
+        string sessionId)
+    {
+        xorLen = 0; // Effectively clear/initialize the table.
+
+        // Add pre-transformed common key.
+        for (int i = 0; i < commonKey.Length && xorLen < XorTableLengthMax; i++) {
+            // Transform the common key, like FUN_0004a120 in libsakasho.so.
+            xorTable[xorLen++] = -0x62 - commonKey[i];
+        }
+
+        // Add session ID as string.
+        for (int i = 0; i < sessionId.Length && xorLen < XorTableLengthMax; i++) {
+            xorTable[xorLen++] = sessionId[i];
+        }
+    }
+
+    /// Applies XOR decoding to the buffer in-place.
+    public void XorDecode(byte[]! data, int dataLen)
+    {
+        XorDecodeBuffer(data, dataLen, xorTable, xorLen);
+    }
+
+    /// Applies XOR encoding to the buffer in-place.
+    public void XorEncode(byte[]! data, int dataLen)
+    {
+        XorEncodeBuffer(data, dataLen, xorTable, xorLen);
+    }
+
+    /// Gets decompressed size from obfuscated/compressed
+    /// data, or 0 if the size varint is invalid.
+    public int GetDecompressedSize(byte[] data, byte[]!? posOut = null)
+    {
+        // Copy the single varint to a temporary buffer.
+        byte[Varint.MaxSizeInt] tmp;
+        data.CopyTo(0, tmp, 0, Varint.MaxSizeInt);
+        XorDecode(tmp, Varint.MaxSizeInt); // XOR decode.
+        byte[1] posOutLocal; posOutLocal[0] = 0; // Varint size/offset stored here.
+        return posOut == null // Optionally use the input posOut.
+            ? Varint.Read(tmp, posOutLocal)
+            : Varint.Read(tmp, posOut);
+    }
+
+    /// Applies the conditional XOR/bit rotation operation to decode the data.
+    /// Reference: libsaksho.so:FUN_0004ec70, Java_jp_dena_sakasho_core_delegate_CookedResponseDelegate_cookResponse
+    public static void XorDecodeBuffer(byte[]! data, int dataLen, byte[] table, int tableLen)
+    {
+        for (int i = 0; i < dataLen; i++) {
+            int keyByte = table[(i + 1) % tableLen];
+            int inputByte = data[i];
+
+            if ((keyByte & 7) == 0) {
+                // Perform XOR.
+                data[i] = inputByte ^ keyByte;
+            } else {
+                int shift = keyByte & 7;
+                // Perform bit rotation (decode direction).
+                data[i] = (inputByte >> (8 - shift)) | (inputByte << shift);
+            }
+        }
+    }
+
+    /// Applies the conditional XOR/bit rotation operation to encode the data.
+    /// Reference: libsaksho.so:FUN_0004ebc0, Java_jp_dena_sakasho_core_http_CookedRequestBody_cookRequest
+    public static void XorEncodeBuffer(byte[]! data, int dataLen, byte[] table, int tableLen)
+    {
+        for (int i = 0; i < dataLen; i++) {
+            int keyByte = table[(i + 1) % tableLen];
+            int inputByte = data[i];
+
+            if ((keyByte & 7) == 0) {
+                // Perform XOR.
+                data[i] = inputByte ^ keyByte;
+            } else {
+                int shift = keyByte & 7;
+                // Perform bit rotation (encode direction).
+                data[i] = (inputByte << (8 - shift)) | (inputByte >> shift);
+            }
+        }
+    }
+}
