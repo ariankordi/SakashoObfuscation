@@ -107,13 +107,13 @@ uint8_t *SakashoObfuscation_Encode(const SakashoObfuscation *self, uint8_t const
 
 /**
  * Applies the conditional XOR/bit rotation operation to decode the data.
- * Reference: libsaksho.so:FUN_0004ec70, Java_jp_dena_sakasho_core_delegate_CookedResponseDelegate_cookResponse
+ * Reference: libsakasho.so:FUN_0004ec70, Java_jp_dena_sakasho_core_delegate_CookedResponseDelegate_cookResponse
  */
 void SakashoObfuscation_XorDecodeBuffer(uint8_t *data, int dataLen, uint8_t const *table, int tableLen);
 
 /**
  * Applies the conditional XOR/bit rotation operation to encode the data.
- * Reference: libsaksho.so:FUN_0004ebc0, Java_jp_dena_sakasho_core_http_CookedRequestBody_cookRequest
+ * Reference: libsakasho.so:FUN_0004ebc0, Java_jp_dena_sakasho_core_http_CookedRequestBody_cookRequest
  */
 void SakashoObfuscation_XorEncodeBuffer(uint8_t *data, int dataLen, uint8_t const *table, int tableLen);
 
