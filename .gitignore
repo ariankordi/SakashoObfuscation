@@ -1,0 +1,8 @@
+*.dSYM
+
+# builds (maybe move to "build" or smth)
+miitomo-obfs-cli
+miitomo-obfs-proxy-fu
+
+*.h
+*.ts
