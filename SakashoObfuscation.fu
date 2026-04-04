@@ -342,6 +342,8 @@ public class SakashoObfuscation
             : Varint.Read(tmp, posOut);
     }
 
+#if !NO_ALLOC
+
     /// Fully decodes and decompresses obfuscated bytes.
     /// Returns a pre-allocated byte array (must be freed by the caller)
     /// or null if the decompression failed.
@@ -415,6 +417,8 @@ public class SakashoObfuscation
         posOut[0] = totalSize;
         return buffer;
     }
+
+#endif // !NO_ALLOC
 
     /// Applies the conditional XOR/bit rotation operation to decode the data.
     /// Reference: libsakasho.so:FUN_0004ec70, Java_jp_dena_sakasho_core_delegate_CookedResponseDelegate_cookResponse
