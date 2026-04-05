@@ -9,10 +9,9 @@
 
 // Initialize the XOR tables.
 const obfs = new SakashoObfuscation();
-obfs.initialize(
-    "9ec1c78fa2cb34e2bed5691c08432f04", // commonKey, always same.
-    // player_session_id cookie value. (Empty by default/for brevity)
-    "");
+obfs.initializeMiitomo(
+    "" // player_session_id cookie value. (Empty by default/for brevity)
+);
 
 // Decoding
 const decompressedSize = obfs.getDecompressedSize(obfuscated);
@@ -23,7 +22,7 @@ console.warn("Input size:", obfuscated.length);
 console.warn("Decompressed size and content:", decompressedSize, result.toHex());
 
 // Encoding
-const cmpSize = new Int32Array([0]);
+const cmpSize = new Uint32Array([0]);
 let encoded = obfs.encode(result, decompressedSize, cmpSize);
 if (!encoded) throw new Error("Encoding failed.");
 encoded = encoded.subarray(0, cmpSize[0]);
@@ -39,7 +38,7 @@ console.assert(result.toHex() == decoded.toHex());
 public static class Varint
 {
     /// Maximum size for a 32-bit integer as a varint.
-    public const int MaxSizeInt = 5;
+    public const uint MaxSizeInt = 5;
     // The true max size is 10 bytes for a 64-bit long, but
     // libsakasho.so doesn't handle larger than 32-bit ints.
 
@@ -54,15 +53,17 @@ public static class Varint
         byte[]! posOut)
     {
         int value = 0;
-        int shift = 0;
-        int pos = posOut[0];
+        uint shift = 0;
+        uint pos = posOut[0];
 
         // libsakasho.so:FUN_0004aeac
-        for (int i = 0; i < MaxSizeInt; i++) {
+        for (uint i = 0; i < MaxSizeInt; i++)
+        {
             int b = data[pos++];
             value |= (b & 0x7F) << shift;
 
-            if ((b & 0x80) == 0) {
+            if ((b & 0x80) == 0)
+            {
                 // End of varint.
                 posOut[0] = pos;
                 return value;
@@ -80,21 +81,25 @@ public static class Varint
 
     /// Writes a 32-bit varint to the specified output.
     /// Returns varint size, or 0 on failure.
-    public static int Write(byte[]! dst, int value,
+    public static uint Write(byte[]! dst, int value,
         /// Offset within dst to write the varint to.
-        int offset = 0)
+        uint offset = 0)
     {
         //if (value < 0)
         //    return 0; // Reject negative values.
-        int pos = 0;
+        uint pos = 0;
 
-        for (int i = 0; i < MaxSizeInt; i++) {
+        for (uint i = 0; i < MaxSizeInt; i++)
+        {
             int b = value & 0x7F;
             value >>= 7;
 
-            if (value != 0) {
+            if (value != 0)
+            {
                 dst[offset + pos++] = b | 0x80;
-            } else {
+            }
+            else
+            {
                 dst[offset + pos++] = b;
                 return pos;
             }
@@ -116,20 +121,21 @@ public static class Lz4
         /// Decompressed output.
         byte[]! dst,
         /// Length of compressed input data.
-        int compressedSize,
+        uint compressedSize,
         /// Capacity of the output buffer.
-        int dstCapacity,
+        uint dstCapacity,
         /// Offset into the compressed data.
-        int srcOffset = 0)
+        uint srcOffset = 0)
     {
         // Derived from AssetStudio (MIT License): https://github.com/RazTools/AssetStudio/blob/807117cb0b366bf02361b54e34846a14dc8558ee/AssetStudio/LZ4Utils.cs
         // NOTE: This function has not been thoroughly tested for out-of-bounds writes.
 
-        int srcPos = 0;
-        int dstPos = 0;
+        uint srcPos = 0;
+        uint dstPos = 0;
 
         // Iterate through all bytes available.
-        while (srcPos < compressedSize && dstPos < dstCapacity) {
+        while (srcPos < compressedSize && dstPos < dstCapacity)
+        {
             if (srcPos >= compressedSize)
                 return -1; // Overflow: no token available.
 
@@ -140,9 +146,11 @@ public static class Lz4
             int litCount = (token >> 4) & 0xF;
 
             // Get literal length (variable/optional).
-            if (litCount == 0xF) {
-                int sum = 0;
-                do {
+            if (litCount == 0xF)
+            {
+                uint sum = 0;
+                do
+                {
                     if (srcPos >= compressedSize)
                         return -1; // Overflow: incomplete extension.
                     sum = src[srcOffset + srcPos++];
@@ -176,9 +184,11 @@ public static class Lz4
                 return -1; // Invalid offset (zero or points before start).
 
             // Get extended match length if needed.
-            if (encCount == 0xF) {
+            if (encCount == 0xF)
+            {
                 int sum = 0;
-                do {
+                do
+                {
                     if (srcPos >= compressedSize)
                         return -1; // Overflow: incomplete extension.
                     sum = src[srcOffset + srcPos++];
@@ -194,15 +204,17 @@ public static class Lz4
             int encPos = dstPos - back;
 
             // Copy match (may overlap for repeat patterns).
-            if (encCount <= back) {
+            if (encCount <= back)
+            {
                 // Non-overlapping: safe bulk copy.
                 dst.CopyTo(encPos, dst, dstPos, encCount);
                 dstPos += encCount;
-            } else {
+            }
+            else
+            {
                 // Overlapping: manual byte-by-byte to handle repetition.
-                for (int i = 0; i < encCount; i++) {
+                for (uint i = 0; i < encCount; i++)
                     dst[dstPos++] = dst[encPos++];
-                }
             }
         }
 
@@ -210,7 +222,7 @@ public static class Lz4
     }
 
     /// Gets the maximum size of a compressed buffer, same as LZ4_compressBound.
-    public static int GetMaxCompressedSize(int inputSize)
+    public static uint GetMaxCompressedSize(int inputSize)
     {
         return inputSize > 0x7E000000 // LZ4_MAX_INPUT_SIZE
             ? 0 // Avoid a potential overflow.
@@ -231,19 +243,19 @@ public static class Lz4
         /// Destination to write compressed data to.
         byte[]! dst,
         /// Size of input data buffer.
-        int srcSize,
+        uint srcSize,
         /// Capacity of the output buffer.
-        int dstCapacity,
+        uint dstCapacity,
         /// Offset into the destination buffer.
-        int dstOffset = 0)
+        uint dstOffset = 0)
     {
-        if (srcSize < 0)
+        if (srcSize <= 0)
             return -1;
 
-        int dstPos = 0;
+        uint dstPos = 0;
 
         // Encode everything as a single literal block.
-        int litLen = srcSize;
+        uint litLen = srcSize;
 
         // Token byte.
         int tokenLit = litLen < 0xF ? litLen : 0xF;
@@ -253,9 +265,11 @@ public static class Lz4
         dst[dstOffset + dstPos++] = tokenLit << 4;
 
         // Extra literal length bytes.
-        if (litLen >= 0xF) {
+        if (litLen >= 0xF)
+        {
             int len = litLen - 0xF;
-            while (len >= 0xFF) {
+            while (len >= 0xFF)
+            {
                 if (dstPos >= dstCapacity)
                     return -1;
                 dst[dstOffset + dstPos++] = 0xFF;
@@ -286,44 +300,69 @@ public static class Lz4
 /// calling the Varint and Lz4 classes implemented here.
 public class SakashoObfuscation
 {
+    /// Length of the common key as a string.
+    public const uint CommonKeyLength = 32;
+    /// The common key as used in the XOR table from Miitomo.
+    public const byte[CommonKeyLength] CommonKeyMiitomo = {
+        0x65, 0x39, 0x3b, 0x6d, 0x3b, 0x67, 0x66, 0x38,
+        0x3d, 0x6c, 0x3b, 0x3c, 0x6b, 0x6a, 0x39, 0x6c,
+        0x3c, 0x39, 0x3a, 0x69, 0x68, 0x65, 0x6d, 0x3b,
+        0x6e, 0x66, 0x6a, 0x6b, 0x6c, 0x38, 0x6e, 0x6a
+    };
+
     /// Maximum for the XOR table length. Official player_session_id
     /// cookies may push this. So if you're having issues, try increasing this.
-    const int XorTableLengthMax = 256;
-    byte[XorTableLengthMax] xorTable;
-    int xorLen;
+    const uint XorTableLengthMax = 256;
 
-    /// Builds or rebuilds the internal XOR table.
-    public void Initialize!(
-        /// The common key string.
-        /// Value for Miitomo: 9ec1c78fa2cb34e2bed5691c08432f04
-        string commonKey,
+    byte[XorTableLengthMax] xorTable;
+    uint xorLen;
+
+#if !NO_STRING
+
+    /// Initializes the obfuscation class for use with Miitomo.
+    public void InitializeMiitomo!(
         /// The value of the player_session_id cookie,
         /// or an empty string if the cookie was not set.
-        string sessionId)
+        string playerSessionId)
+    {
+        InitializeWithKey(CommonKeyMiitomo, /* sessionId= */ null, 0);
+
+        // Add session ID as string.
+        for (uint i = 0; i < playerSessionId.Length && xorLen < XorTableLengthMax; i++)
+            xorTable[xorLen++] = playerSessionId[i];
+    }
+
+#endif // !NO_STRING
+
+    /// Builds or rebuilds the internal XOR table.
+    public void InitializeWithKey!(
+        byte[] key,
+        byte[]? sessionId,
+        uint sessionIdLength)
     {
         xorLen = 0; // Effectively clear/initialize the table.
 
-        // Add pre-transformed common key.
-        for (int i = 0; i < commonKey.Length && xorLen < XorTableLengthMax; i++) {
-            // Transform the common key, like FUN_0004a120 in libsakasho.so.
-            byte c = commonKey[i];
-            xorTable[xorLen++] = (-0x62 - c) & 0xFF;
-        }
+        AddToXorTable(key, CommonKeyLength);
+        assert sessionIdLength <= 0 || sessionId != null;
+        AddToXorTable(sessionId, sessionIdLength);
+    }
 
-        // Add session ID as string.
-        for (int i = 0; i < sessionId.Length && xorLen < XorTableLengthMax; i++) {
-            xorTable[xorLen++] = sessionId[i];
-        }
+    /// Adds bytes to the XOR table, making sure to not overflow it.
+    /// Typically the transformed common key is added, and then the session ID.
+    void AddToXorTable!(byte[] b, uint length)
+    {
+        for (uint i = 0; i < length && xorLen < XorTableLengthMax; i++)
+            xorTable[xorLen++] = b[i];
     }
 
     /// Applies XOR decoding to the buffer in-place.
-    public void XorDecode(byte[]! data, int dataLen)
+    public void XorDecode(byte[]! data, uint dataLen)
     {
         XorDecodeBuffer(data, dataLen, xorTable, xorLen);
     }
 
     /// Applies XOR encoding to the buffer in-place.
-    public void XorEncode(byte[]! data, int dataLen)
+    public void XorEncode(byte[]! data, uint dataLen)
     {
         XorEncodeBuffer(data, dataLen, xorTable, xorLen);
     }
@@ -347,7 +386,7 @@ public class SakashoObfuscation
     /// Fully decodes and decompresses obfuscated bytes.
     /// Returns a pre-allocated byte array (must be freed by the caller)
     /// or null if the decompression failed.
-    public byte[]#? Decode(byte[] data, int dataLen)
+    public byte[]#? Decode(byte[] data, uint dataLen)
     {
         byte[]# tmp = new byte[dataLen]; // Temporary decoded output.
         data.CopyTo(0, tmp, 0, dataLen); // Copy the input data.
@@ -377,22 +416,22 @@ public class SakashoObfuscation
     /// containing the compressed and obfuscated data, or null on failure.
     ///
     /// NOTE: The length of the array is posOut. You must trim the output.
-    /// Example: const len = new Uint8Array([0]);
+    /// Example: const len = new Uint32Array([0]);
     /// let result = obfs.encode(in, size, len); result = result.subarray(0, len);
-    public byte[]#? Encode(byte[] data, int dataLen,
+    public byte[]#? Encode(byte[] data, uint dataLen,
         /// Array where the 0th element is the output size.
-        int[]! posOut)
+        uint[]! posOut)
     {
         // Get the maximum size/worst-case scenario to know
         // how much to allocate the compressed data buffer.
-        int maxCompressed = Lz4.GetMaxCompressedSize(dataLen);
+        uint maxCompressed = Lz4.GetMaxCompressedSize(dataLen);
         if (maxCompressed <= 0)
             return null; // Input data is too long or short.
 
         // Allocate buffer to hold maximum for compressed data and varint.
         byte[]# buffer = new byte[Varint.MaxSizeInt + maxCompressed];
         // Write the size of the uncompressed data.
-        int varintSize = Varint.Write(buffer, dataLen, 0);
+        uint varintSize = Varint.Write(buffer, dataLen, 0);
         if (varintSize <= 0)
             return null; // Input data is larger than varint max size.
 
@@ -403,7 +442,7 @@ public class SakashoObfuscation
             return null; // Compression failed.
 
         // Actual size of compressed payload. The buffer is larger than this.
-        int totalSize = varintSize + compressedSize;
+        uint totalSize = varintSize + compressedSize;
         // Compression is finished. XOR encode the whole stream.
         XorEncode(buffer, totalSize);
 
@@ -420,19 +459,41 @@ public class SakashoObfuscation
 
 #endif // !NO_ALLOC
 
+    /// Transform the common key from its hexadecimal string
+    /// form into the raw bytes used in the XOR table.
+    public static void XformCommonKey(
+        /// For Miitomo, the value of this is the hexadecimal
+        /// string (NOT decoded from hex): 9ec1c78fa2cb34e2bed5691c08432f04
+        byte[]! key)
+    {
+        for (uint i = 0; i < CommonKeyLength; i++)
+        {
+            // Transform the common key, like FUN_0004a120 in libsakasho.so.
+            byte c = key[i];
+            key[i] = (-0x62 - c) & 0xFF;
+        }
+    }
+
     /// Applies the conditional XOR/bit rotation operation to decode the data.
     /// Reference: libsakasho.so:FUN_0004ec70, Java_jp_dena_sakasho_core_delegate_CookedResponseDelegate_cookResponse
-    public static void XorDecodeBuffer(byte[]! data, int dataLen, byte[] table, int tableLen)
+    public static void XorDecodeBuffer(byte[]! data,
+        uint dataLen, byte[] table, uint tableLen)
     {
-        for (int i = 0; i < dataLen; i++) {
+        for (uint i = 0; i < dataLen; i++)
+        {
             int keyByte = table[(i + 1) % tableLen];
+            // if this is uint, then it hits a fut bug?
+            // https://github.com/fusionlanguage/fut/issues/220
             int inputByte = data[i];
 
-            if ((keyByte & 7) == 0) {
+            if ((keyByte & 7) == 0)
+            {
                 // Perform XOR.
                 data[i] = inputByte ^ keyByte;
-            } else {
-                int shift = keyByte & 7;
+            }
+            else
+            {
+                uint shift = keyByte & 7;
                 // Perform bit rotation (decode direction).
                 data[i] = ((inputByte >> (8 - shift)) | (inputByte << shift)) & 0xFF;
             }
@@ -441,17 +502,22 @@ public class SakashoObfuscation
 
     /// Applies the conditional XOR/bit rotation operation to encode the data.
     /// Reference: libsakasho.so:FUN_0004ebc0, Java_jp_dena_sakasho_core_http_CookedRequestBody_cookRequest
-    public static void XorEncodeBuffer(byte[]! data, int dataLen, byte[] table, int tableLen)
+    public static void XorEncodeBuffer(byte[]! data,
+        uint dataLen, byte[] table, uint tableLen)
     {
-        for (int i = 0; i < dataLen; i++) {
+        for (uint i = 0; i < dataLen; i++)
+        {
             int keyByte = table[(i + 1) % tableLen];
             int inputByte = data[i];
 
-            if ((keyByte & 7) == 0) {
+            if ((keyByte & 7) == 0)
+            {
                 // Perform XOR.
                 data[i] = inputByte ^ keyByte;
-            } else {
-                int shift = keyByte & 7;
+            }
+            else
+            {
+                uint shift = keyByte & 7;
                 // Perform bit rotation (encode direction).
                 data[i] = ((inputByte << (8 - shift)) | (inputByte >> shift)) & 0xFF;
             }

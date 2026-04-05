@@ -147,7 +147,7 @@ class Lz4:
 		:param dst_capacity: Capacity of the output buffer.
 		:param dst_offset: Offset into the destination buffer.
 		"""
-		if src_size < 0:
+		if src_size <= 0:
 			return -1
 		dst_pos: int = 0
 		lit_len: int = src_size
@@ -185,26 +185,43 @@ class SakashoObfuscation:
 
 	def __init__(self):
 		self._xor_table = bytearray(256)
+
+	COMMON_KEY_LENGTH = 32
+	"""Length of the common key as a string."""
+
+	COMMON_KEY_MIITOMO = bytes([ 101, 57, 59, 109, 59, 103, 102, 56, 61, 108, 59, 60, 107, 106, 57, 108,
+		60, 57, 58, 105, 104, 101, 109, 59, 110, 102, 106, 107, 108, 56, 110, 106 ])
+	"""The common key as used in the XOR table from Miitomo."""
 	_xor_table: bytearray
 	_xor_len: int
 
-	def initialize(self, common_key: str, session_id: str) -> None:
-		"""Builds or rebuilds the internal XOR table.
+	def initialize_miitomo(self, player_session_id: str) -> None:
+		"""Initializes the obfuscation class for use with Miitomo.
 
-		:param common_key: The common key string.
-		:param session_id: The value of the player_session_id cookie,
+		:param player_session_id: The value of the player_session_id cookie,
 		or an empty string if the cookie was not set.
 		"""
-		self._xor_len = 0
+		self.initialize_with_key(SakashoObfuscation.COMMON_KEY_MIITOMO, None, 0)
 		i: int = 0
-		while i < len(common_key) and self._xor_len < 256:
-			c: int = ord(common_key[i])
-			self._xor_table[self._xor_len] = (-98 - c) & 255
+		while i < len(player_session_id) and self._xor_len < 256:
+			self._xor_table[self._xor_len] = ord(player_session_id[i])
 			self._xor_len += 1
 			i += 1
+
+	def initialize_with_key(self, key: bytearray | bytes, session_id: bytearray | bytes | None, session_id_length: int) -> None:
+		"""Builds or rebuilds the internal XOR table."""
+		self._xor_len = 0
+		self._add_to_xor_table(key, 32)
+		assert session_id_length <= 0 or session_id is not None
+		self._add_to_xor_table(session_id, session_id_length)
+
+	def _add_to_xor_table(self, b: bytearray | bytes, length: int) -> None:
+		"""Adds bytes to the XOR table, making sure to not overflow it.
+
+		Typically the transformed common key is added, and then the session ID."""
 		i: int = 0
-		while i < len(session_id) and self._xor_len < 256:
-			self._xor_table[self._xor_len] = ord(session_id[i])
+		while i < length and self._xor_len < 256:
+			self._xor_table[self._xor_len] = b[i]
 			self._xor_len += 1
 			i += 1
 
@@ -252,7 +269,7 @@ class SakashoObfuscation:
 		Returned a pre-allocated byte array (must be freed by the caller)
 		containing the compressed and obfuscated data, or null on failure.
 		NOTE: The length of the array is posOut. You must trim the output.
-		Example: const len = new Uint8Array([0]);
+		Example: const len = new Uint32Array([0]);
 		let result = obfs.encode(in, size, len); result = result.subarray(0, len);
 
 		:param pos_out: Array where the 0th element is the output size.
@@ -271,6 +288,18 @@ class SakashoObfuscation:
 		self.xor_encode(buffer, total_size)
 		pos_out[0] = total_size
 		return buffer
+
+	@staticmethod
+	def xform_common_key(key: bytearray) -> None:
+		"""Transform the common key from its hexadecimal string
+		form into the raw bytes used in the XOR table.
+
+		:param key: For Miitomo, the value of this is the hexadecimal
+		string (NOT decoded from hex): 9ec1c78fa2cb34e2bed5691c08432f04
+		"""
+		for i in range(32):
+			c: int = key[i]
+			key[i] = (-98 - c) & 255
 
 	@staticmethod
 	def xor_decode_buffer(data: bytearray, data_len: int, table: bytearray | bytes, table_len: int) -> None:

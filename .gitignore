@@ -1,8 +1,6 @@
 *.dSYM
 
 # builds (maybe move to "build" or smth)
-miitomo-obfs-cli
-miitomo-obfs-proxy-fu
-
-*.h
-*.ts
+__pycache__
+sakasho-obfuscation-cli
+sakasho-proxy/sakasho-proxy

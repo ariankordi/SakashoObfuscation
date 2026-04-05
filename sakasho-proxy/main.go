@@ -23,8 +23,6 @@ import (
 	"unsafe"
 )
 
-const commonKey = "9ec1c78fa2cb34e2bed5691c08432f04"
-
 // SakashoObfuscation wrapper with convenience methods.
 // The struct is already defined in the C-transpiled code.
 // We just add these methods.
@@ -134,17 +132,17 @@ func (obfs *SakashoObfuscation) Encode(data []byte) ([]byte, error) {
 	return result, nil
 }
 
-// Initialize builds the XOR table from common key and session ID.
+// Initialize builds the XOR table from session ID.
 // Wrapper for convenience (C version takes *byte).
-func (obfs *SakashoObfuscation) Initialize(commonKey, sessionID string) {
-	// Create C-compatible null-terminated strings
-	ckBytes := append([]byte(commonKey), 0)
+func (obfs *SakashoObfuscation) InitializeMiitomo(sessionID string) {
+	// Create C-compatible null-terminated string
 	sidBytes := append([]byte(sessionID), 0)
 
-	SakashoObfuscation_Initialize(
+	SakashoObfuscation_InitializeWithKey(
 		obfs,
-		(*byte)(unsafe.Pointer(&ckBytes[0])),
+		(*byte)(unsafe.Pointer(&SakashoObfuscation_COMMON_KEY_MIITOMO[0])),
 		(*byte)(unsafe.Pointer(&sidBytes[0])),
+		len(sessionID),
 	)
 }
 
@@ -204,7 +202,7 @@ func proxyHandler(upstreamURL *url.URL, certFile, keyFile string) func(w http.Re
 
         // Build obfuscator
 		obfs := &SakashoObfuscation{}
-		obfs.Initialize(commonKey, sessionID)
+		obfs.InitializeMiitomo(sessionID)
         //xorTable := buildXorTable(commonKey, sessionID)
 
         // Properly handle empty request bodies

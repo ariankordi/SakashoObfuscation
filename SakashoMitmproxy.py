@@ -3,14 +3,9 @@ from mitmproxy import ctx
 from transpiled.SakashoObfuscation import SakashoObfuscation
 import array
 
-COMMON_KEY = "9ec1c78fa2cb34e2bed5691c08432f04" # default for miitomo
 SESSION_ID_COOKIE_NAME = "player_session_id"
 
 class SakashoMitmproxy:
-    def __init__(self):
-        # Constant common key
-        self.common_key = COMMON_KEY
-
     # ----------------------------
     # Utilities
     # ----------------------------
@@ -65,7 +60,7 @@ class SakashoMitmproxy:
 
     def build_obfuscator(self, session_id: str) -> SakashoObfuscation:
         obfs = SakashoObfuscation()
-        obfs.initialize(self.common_key, session_id)
+        obfs.initialize_miitomo(session_id)
         return obfs
 
     # ----------------------------

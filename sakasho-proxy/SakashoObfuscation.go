@@ -1,41 +1,22 @@
-// Transpiled by: https://github.com/gotranspile/cxgo
-// Steps for going from SakashoObfuscation.fu -> SakashoObfuscation.go:
-// * fut -o SakashoObfuscation.c -D C -D NO_ALLOC -l c SakashoObfuscation.fu
-// * cxgo file transpiled/SakashoObfuscation.c
-// * Manually inline MemCpy, StrLen from cxgo's runtime
-
 package main
 
 import "unsafe"
 
+func MemCpy(dst, src unsafe.Pointer, sz int) {
+	bdst := unsafe.Slice((*byte)(dst), sz)
+	bsrc := unsafe.Slice((*byte)(src), sz)
+	copy(bdst, bsrc)
+}
+
 const Varint_MAX_SIZE_INT = 5
+const SakashoObfuscation_COMMON_KEY_LENGTH = 32
 
 type SakashoObfuscation struct {
 	xorTable [256]uint8
 	xorLen   int
 }
 
-// cxgo/runtime/libc/string.go
-
-func MemCpy(dst, src unsafe.Pointer, sz int) { // memcpy
-	bdst := unsafe.Slice((*byte)(dst), sz)
-	bsrc := unsafe.Slice((*byte)(src), sz)
-	copy(bdst, bsrc)
-}
-
-func findnull[T interface{ byte | uint16 | uint32 }](str *T) int { // strlen
-	if str == nil {
-		return 0
-	}
-	var zero T
-	size := unsafe.Sizeof(zero)
-	i := 0
-	for *str != 0 {
-		str = (*T)(unsafe.Add(unsafe.Pointer(str), size))
-		i++
-	}
-	return i
-}
+var SakashoObfuscation_COMMON_KEY_MIITOMO [32]uint8 = [32]uint8{101, 57, 59, 109, 59, 103, 102, 56, 61, 108, 59, 60, 107, 106, 57, 108, 60, 57, 58, 105, 104, 101, 109, 59, 110, 102, 106, 107, 108, 56, 110, 106}
 
 func Varint_Read(data *uint8, posOut *uint8) int {
 	var (
@@ -192,7 +173,7 @@ func Lz4_GetMaxCompressedSize(inputSize int) int {
 	return inputSize + inputSize/255 + 16
 }
 func Lz4_Compress(src *uint8, dst *uint8, srcSize int, dstCapacity int, dstOffset int) int {
-	if srcSize < 0 {
+	if srcSize <= 0 {
 		return -1
 	}
 	var dstPos int = 0
@@ -243,24 +224,22 @@ func Lz4_Compress(src *uint8, dst *uint8, srcSize int, dstCapacity int, dstOffse
 	dstPos += srcSize
 	return dstPos
 }
-func SakashoObfuscation_Initialize(self *SakashoObfuscation, commonKey *byte, sessionId *byte) {
+func SakashoObfuscation_InitializeWithKey(self *SakashoObfuscation, key *uint8, sessionId *uint8, sessionIdLength int) {
 	self.xorLen = 0
-	for i := int(0); i < int(int64(findnull(commonKey))) && self.xorLen < 256; i++ {
-		var c int = int(*(*byte)(unsafe.Add(unsafe.Pointer(commonKey), i)))
-		self.xorTable[func() int {
-			p_ := &self.xorLen
-			x := *p_
-			*p_++
-			return x
-		}()] = uint8(int8(-98 - c))
+	SakashoObfuscation_AddToXorTable(self, key, 32)
+	if sessionIdLength > 0 && sessionId == nil {
+		panic("assert failed")
 	}
-	for i := int(0); i < int(int64(findnull(sessionId))) && self.xorLen < 256; i++ {
+	SakashoObfuscation_AddToXorTable(self, sessionId, sessionIdLength)
+}
+func SakashoObfuscation_AddToXorTable(self *SakashoObfuscation, b *uint8, length int) {
+	for i := int(0); i < length && self.xorLen < 256; i++ {
 		self.xorTable[func() int {
 			p_ := &self.xorLen
 			x := *p_
 			*p_++
 			return x
-		}()] = uint8(*(*byte)(unsafe.Add(unsafe.Pointer(sessionId), i)))
+		}()] = *(*uint8)(unsafe.Add(unsafe.Pointer(b), i))
 	}
 }
 func SakashoObfuscation_XorDecode(self *SakashoObfuscation, data *uint8, dataLen int) {
@@ -279,6 +258,12 @@ func SakashoObfuscation_GetDecompressedSize(self *SakashoObfuscation, data *uint
 		return Varint_Read(&tmp[0], &posOutLocal[0])
 	}
 	return Varint_Read(&tmp[0], posOut)
+}
+func SakashoObfuscation_XformCommonKey(key *uint8) {
+	for i := int(0); i < 32; i++ {
+		var c int = int(*(*uint8)(unsafe.Add(unsafe.Pointer(key), i)))
+		*(*uint8)(unsafe.Add(unsafe.Pointer(key), i)) = uint8(int8(-98 - c))
+	}
 }
 func SakashoObfuscation_XorDecodeBuffer(data *uint8, dataLen int, table *uint8, tableLen int) {
 	for i := int(0); i < dataLen; i++ {

@@ -7,9 +7,7 @@ public class SakashoObfuscationTest
         string testSessionId = "ExfvbaLYekTosbFMNdcDEEoZ1C3a1n7CuPd89x4FDkFdbXWsOCbjPCb-V9qsVmdAyqHLZZwU401pQ6uwr6ij9gtEyRk0KVfSxLXQ9Qn0II0-XzBryDb_P-Nwp24yFoMUES8NNQ5o12Proeg07aRhKOTBH-F-WrsjoUM4ngdOLTZ48upeOXaE7ALa74uUOoXN";
 
         SakashoObfuscation() obfs;
-        obfs.Initialize(
-            "9ec1c78fa2cb34e2bed5691c08432f04",
-            testSessionId);
+        obfs.InitializeMiitomo(testSessionId);
 
         // Decoding
         int decSize = obfs.GetDecompressedSize(obfuscated);
@@ -27,7 +25,7 @@ public class SakashoObfuscationTest
         }
 
         // Encoding
-        int[1] cmpSize; cmpSize[0] = 0;
+        uint[1] cmpSize; cmpSize[0] = 0;
         byte[]#? encoded = obfs.Encode(decoded, decSize, cmpSize);
         if (encoded == null)
         {
